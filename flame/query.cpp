@@ -149,19 +149,34 @@ void QueryGenerator::set_args(const std::vector<std::string> &args)
 }
 
 #ifdef DOH_ENABLE
-QueryGenerator::QueryTpt QueryGenerator::next_base64url(uint16_t id)
+QueryGenerator::QueryTpt QueryGenerator::next_base64url()
 {
     WireTpt w = _wire_buffers[_reqs++ % _wire_buffers.size()];
     size_t len{w.second};
     auto buf = std::make_unique<char[]>(len);
     memcpy(buf.get(), w.first, w.second);
-    uint16_t _id = ntohs(id);
-    memcpy(buf.get(), &_id, sizeof(_id));
-    std::string encoded = base64_encode((unsigned char *)buf.get(), len);
+    // RFC 8484 §4.1: DNS message ID MUST be 0 in DoH requests.
+    uint16_t zero = 0;
+    memcpy(buf.get(), &zero, sizeof(zero));
+    // RFC 8484 §4.1: encode as base64url (URL-safe alphabet, no padding).
+    std::string encoded = base64_encode((unsigned char *)buf.get(), len, true);
+    while (!encoded.empty() && encoded.back() == '.') encoded.pop_back();
     size_t encoded_len = encoded.size();
     auto encoded_buf = std::make_unique<char[]>(encoded_len);
     memcpy(encoded_buf.get(), encoded.c_str(), encoded_len);
     return std::make_tuple(std::move(encoded_buf), encoded_len);
+}
+
+QueryGenerator::QueryTpt QueryGenerator::next_doh_post()
+{
+    WireTpt w = _wire_buffers[_reqs++ % _wire_buffers.size()];
+    size_t len{w.second};
+    auto buf = std::make_unique<char[]>(len);
+    memcpy(buf.get(), w.first, w.second);
+    // RFC 8484 §4.1: DNS message ID MUST be 0 in DoH requests.
+    uint16_t zero = 0;
+    memcpy(buf.get(), &zero, sizeof(zero));
+    return std::make_tuple(std::move(buf), len);
 }
 #endif
 

@@ -52,6 +52,20 @@ void TrafGen::process_wire(const char data[], size_t len)
     // The response code is in the low-order 4 bits of the flags header field.
     uint8_t rcode = data[3] & 0xf;
 
+#ifdef DOH_ENABLE
+    // DoH always uses DNS ID=0 on the wire (RFC 8484 §4.1). HTTP/2 does not
+    // guarantee response ordering, but FIFO is a reasonable approximation for
+    // load testing. Match the response to the oldest outstanding query.
+    if (_traf_config->protocol == Protocol::DOH) {
+        if (_doh_inflight_ids.empty()) {
+            _metrics->bad_receive(_in_flight.size());
+            return;
+        }
+        id = _doh_inflight_ids.front();
+        _doh_inflight_ids.pop_front();
+    }
+#endif
+
     if (_in_flight.find(id) == _in_flight.end()) {
         if (_config->verbosity() > 1) {
             std::cerr << "untracked " << id << std::endl;
@@ -144,11 +158,14 @@ void TrafGen::start_tcp_session()
             _started_sending = true;
 
 #ifdef DOH_ENABLE
-            // Send one by one with DoH
+            // DoH: send each query as its own HTTP/2 request. DNS ID is
+            // always 0 on the wire (RFC 8484 §4.1); process_wire() matches
+            // responses FIFO via _doh_inflight_ids.
             if (_traf_config->protocol == Protocol::DOH) {
+                _doh_inflight_ids.push_back(id);
                 auto qt = (_traf_config->method == HTTPMethod::GET)
-                    ? _qgen->next_base64url(id_list[i])
-                    : _qgen->next_udp(id_list[i]);
+                    ? _qgen->next_base64url()
+                    : _qgen->next_doh_post();
                 _tcp_session->write(std::move(std::get<0>(qt)), std::get<1>(qt));
                 _metrics->send(std::get<1>(qt), 1, _in_flight.size());
             }
@@ -385,6 +402,13 @@ void TrafGen::handle_timeouts(bool force_reset)
 {
 
     std::vector<uint16_t> timed_out;
+#ifdef DOH_ENABLE
+    // On a forced reset (e.g. TCP drop), orphaned FIFO entries will never
+    // be matched; clear the deque so the next session starts clean.
+    if (force_reset) {
+        _doh_inflight_ids.clear();
+    }
+#endif
     auto now = std::chrono::high_resolution_clock::now();
     for (auto i : _in_flight) {
         if (force_reset || std::chrono::duration_cast<std::chrono::seconds>(now - i.second.send_time).count() >= _traf_config->r_timeout) {
@@ -395,6 +419,13 @@ void TrafGen::handle_timeouts(bool force_reset)
         _in_flight.erase(i);
         _metrics->timeout(_in_flight.size());
         _free_id_list.push_back(i);
+#ifdef DOH_ENABLE
+        // Also remove timed-out IDs from the FIFO deque; otherwise a late
+        // response would pop the stale entry and mis-match a new in-flight query.
+        auto it = std::find(_doh_inflight_ids.begin(), _doh_inflight_ids.end(), i);
+        if (it != _doh_inflight_ids.end())
+            _doh_inflight_ids.erase(it);
+#endif
     }
 }
 

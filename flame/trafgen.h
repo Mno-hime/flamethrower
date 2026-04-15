@@ -6,6 +6,10 @@
 #include <unordered_map>
 #include <vector>
 
+#ifdef DOH_ENABLE
+#include <deque>
+#endif
+
 #include "config.h"
 
 #ifdef DOH_ENABLE
@@ -75,6 +79,13 @@ class TrafGen {
     std::unordered_map<uint16_t, Query> _in_flight;
     // a randomized list of query ids that are not currently in flight
     std::vector<uint16_t> _free_id_list;
+#ifdef DOH_ENABLE
+    // DoH always uses DNS ID=0 on the wire (RFC 8484 §4.1). HTTP/2 does not
+    // guarantee response ordering, but FIFO is a reasonable approximation for
+    // load testing. Responses are matched to sent queries via this deque of
+    // internal tracking IDs (front = oldest outstanding query).
+    std::deque<uint16_t> _doh_inflight_ids;
+#endif
 
     bool _started_sending;
     bool _stopping;
