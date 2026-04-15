@@ -120,9 +120,10 @@ static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
     auto stream_data = static_cast<http2_stream_data *>(nghttp2_session_get_stream_user_data(session, stream_id));
     if (!stream_data) {
         std::cerr << "No stream data on stream close" << std::endl;
-        return 0;
     }
-    nghttp2_session_terminate_session(session, NGHTTP2_NO_ERROR);
+    // Do not terminate the session here: TrafGen may pipeline more queries
+    // over this connection. The session is torn down by TrafGen once all
+    // in-flight queries have been answered (via _finish_session_timer).
     return 0;
 }
 
