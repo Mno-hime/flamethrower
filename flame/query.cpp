@@ -350,6 +350,16 @@ void QueryGenerator::new_rec(uint8_t **dest, size_t *dest_len, const char *qname
 
     ldns_pkt2wire(dest, query, dest_len);
     ldns_pkt_free(query);
+
+    // ldns_pkt2wire() always allocates LDNS_MAX_PACKETLEN (65535) bytes and
+    // ldns_buffer_export() never trims; shrink so a large -f query list doesn't
+    // reserve multiple GB of heap.
+    if (*dest && *dest_len > 0 && *dest_len < LDNS_MAX_PACKETLEN) {
+        uint8_t *shrunk = (uint8_t *)realloc(*dest, *dest_len);
+        if (shrunk) {
+            *dest = shrunk;
+        }
+    }
 }
 
 void QueryGenerator::push_rec(const char *qname, size_t len, const std::string &qtype, bool binary)
